@@ -1,10 +1,54 @@
 #!/usr/bin/perl
 
+=head1 navilink.pl
+
+This Script implements the NaviLink protocol to communicate with a
+Locosys NaviGPS via serial USB
+
+Please note: This script is far from complete, only track downloading is
+             currently supported. If you want to help refer to the protocol
+             specification at http://wiki.splitbrain.org/navilink at send
+             patches in unified diff format.
+
+
+Copyright (c) 2007, Andreas Gohr <andi@splitbrain.org>
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice,
+      this list of conditions and the following disclaimer.
+
+    * Redistributions in binary form must reproduce the above copyright notice,
+      this list of conditions and the following disclaimer in the documentation
+      and/or other materials provided with the distribution.
+
+    * Neither the name of Andreas Gohr nor the names of other contributors may
+      be used to endorse or promote products derived from this software without
+      specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+=cut
+
+
 $| = 1;
 
 use Device::SerialPort;
-use Time::HiRes qw( usleep );
 use Data::Dumper;
+use Getopt::Std;
 
 use constant PID_SYNC             => "\xd6";
 use constant PID_ACK              => "\x0c";
@@ -42,7 +86,7 @@ sub sendRawPacket {
        $packet .= pack('v',checkSum($type.$data));   # checksum
        $packet .= "\xB0\xB3";                        # end sequence
 
-    print STDERR '-> '.hexdump($packet)."\n";
+    print STDERR '-> '.hexdump($packet)."\n" if($OPT{'v'});
     $DEV->write($packet);
 }
 
@@ -67,7 +111,7 @@ sub readPacket {
         }
     } until (substr($msg,-2) eq "\xb0\xb3");
 
-    print STDERR '<- '.hexdump($msg)."\n";
+    print STDERR '<- '.hexdump($msg)."\n" if($OPT{'v'});
 
     my $payload = substr($msg,4,-4);
     my $sum     = unpack("v",substr($msg,-4,2));
@@ -114,9 +158,6 @@ Reads all Trackpoints from the device and prints it as GPX data
 =cut
 sub downloadTrackData {
     my %info = downloadInfo();
-
-    print STDERR Dumper(\%info);
-
     if(!defined(%info) || !$info{'trackpoints'}){
         print STDERR "There are no trackpoints available";
         return 0;
@@ -125,7 +166,6 @@ sub downloadTrackData {
     my $addr  = $info{'trackbuffer'};        # buffer address
     my $read  = 0;                           # bytes already read
     my $max   = $info{'trackpoints'} * 32;   # maximum bytes to read
-#$max = 64; #FIXME two wp only
     my $track = '';
 
     while($read < $max){
@@ -144,10 +184,7 @@ sub downloadTrackData {
             print STDERR "Did not receive expected Trackpoint data";
             return 0;
         }
-
         $track .= $data;
-
-        # FIXME handle date here
 
         # increase read counter
         $read += $toread;
@@ -156,14 +193,14 @@ sub downloadTrackData {
         sendRawPacket(PID_ACK);
     }
 
-
-    print "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-    print "<gpx version=\"1.0\" creator=\"navilink\"
-            xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"
-            xmlns=\"http://www.topografix.com/GPX/1/0\"
-            xsi:schemaLocation=\"http://www.topografix.com/GPX/1/0 http://www.topografix.com/GPX/1/0/gpx.xsd\">\n";
-    print "<trk>\n";
-    print "<trkseg>\n";
+    # Creat GPX file
+    print OUT "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+    print OUT "<gpx version=\"1.0\" creator=\"navilink\"
+                xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"
+                xmlns=\"http://www.topografix.com/GPX/1/0\"
+                xsi:schemaLocation=\"http://www.topografix.com/GPX/1/0 http://www.topografix.com/GPX/1/0/gpx.xsd\">\n";
+    print OUT "<trk>\n";
+    print OUT "<trkseg>\n";
 
     # now parse the track log
     for(my $i=0; $i<$read; $i+=32){
@@ -172,16 +209,16 @@ sub downloadTrackData {
         #print hexdump(substr($track,$i,32))."\n";
         #print Dumper(\@tp);
 
-        printf "<trkpt lat=\"%f\" lon=\"%f\">\n", $tp[4]/10000000, $tp[5]/10000000;
-        printf "  <ele>%f</ele>\n", $tp[6]*0.3048; #feet to meters
-        printf "  <time>%04d-%02d-%02dT%02d:%02d:%02d</time>\n", $tp[7]+2000, $tp[8], $tp[9], $tp[10], $tp[11], $tp[12];
-        printf "  <speed>%02d</speed>\n",$tp[14]*2;
-        printf "</trkpt>\n";
+        printf OUT "<trkpt lat=\"%f\" lon=\"%f\">\n", $tp[4]/10000000, $tp[5]/10000000;
+        printf OUT "  <ele>%f</ele>\n", $tp[6]*0.3048; #feet to meters
+        printf OUT "  <time>%04d-%02d-%02dT%02d:%02d:%02d</time>\n", $tp[7]+2000, $tp[8], $tp[9], $tp[10], $tp[11], $tp[12];
+        printf OUT "  <speed>%02d</speed>\n",$tp[14]*2;
+        printf OUT "</trkpt>\n";
     }
 
-    print "</trkseg>\n";
-    print "</trk>\n";
-    print "</gpx>\n";
+    print OUT "</trkseg>\n";
+    print OUT "</trk>\n";
+    print OUT "</gpx>\n";
 
     return 1;
 }
@@ -225,33 +262,81 @@ sub hexdump {
     return $packet;
 }
 
+sub help {
+    print <<EOT;
+Usage: navilink.pl [OPTIONS] COMMAND
+Download or Upload data to a NaviGPS device
+
+  -h            print this usage help
+  -v            be verbose (packet debugging)
+  -d <device>   device to use, defaults to /dev/ttyUSB0
+  -q            quit communication after finishing
+  -i <file>     use this file for input instead of STDIN
+  -o <file>     use this file for output instead of STDOUT
+
+COMMAND can be one of these:
+
+  info          print number of waypoints, routes and trackpoints
+  gettracks     download track data as GPX
+EOT
+
+    exit 0
+}
 
 ###############################################################################
 # main
 
-$device = '/dev/ttyUSB0'; #FIXME make configurable
 
-$DEV = new Device::SerialPort ($device) || die "Can't open $device: $^E\n";
+# prepare options
+%OPT;
+getopts('d:hvqi:o:',\%OPT);
+$OPT{'d'} = '/dev/ttyUSB0' if(!$OPT{'d'});
+help() if($OPT{'h'} || !$ARGV[0]);
+
+
+# open device
+$DEV = new Device::SerialPort ($OPT{'d'}) || die "Can't open ".$OPT{'d'}.": $^E\n";
 $DEV->baudrate(115200);
 $DEV->databits(8);
 $DEV->parity("none");
 $DEV->stopbits(1);
 
+# sync
 sendRawPacket(PID_SYNC);
-($type,$data) = readPacket();
+my ($type,$data) = readPacket();
 die("got no ack on sync") if($type != PID_ACK);
 
-#sendRawPacket(PID_QRY_INFORMATION);
-#($type,$data) = readPacket();
-#die("got no data") if($type != PID_DATA);
-#%info = parseInfoPacket($data);
+# open files
+if($OPT{'i'}){
+    open(IN,$OPT{'i'}) || die("Could not open ".$OPT{'i'}." for reading");
+}else{
+    *IN = *STDIN;
+}
+
+if($OPT{'o'}){
+    open(OUT,">".$OPT{'o'}) || die("Could not open ".$OPT{'o'}." for writing");
+}else{
+    *OUT = *STDERR;
+}
 
 
-downloadTrackData();
 
-#sendRawPacket(PID_QUIT);
+# handle commands
+if($ARGV[0] eq 'gettracks'){
+    downloadTrackData();
+}elsif($ARGV[0] eq 'info'){
+    my %info = downloadInfo();
+    print OUT 'waypoints   : '.$info{'waypoints'}."\n";
+    print OUT 'routes      : '.$info{'routes'}."\n";
+    print OUT 'trackpoints : '.$info{'trackpoints'}."\n";
+}
 
+
+# quit if wanted
+sendRawPacket(PID_QUIT) if ($OPT{'q'});
 
 $DEV->close;
-
+close(IN);
+close(OUT);
+exit 0;
 
