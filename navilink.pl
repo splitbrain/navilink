@@ -11,7 +11,11 @@ Please note: This script is far from complete, only track downloading is
              patches in unified diff format.
 
 
-Copyright (c) 2007, Andreas Gohr <andi@splitbrain.org>
+Copyright (c) 2007, Andreas Gohr <andi (at) splitbrain.org>
+
+Contributors:
+    Andreas Gohr <andi (at) splitbrain.org>
+    Martijn van Oosterhout <kleptog (at) svana.org>
 
 All rights reserved.
 
@@ -69,6 +73,7 @@ use constant PID_CMD_OK           => "\xf3";
 use constant PID_CMD_FAIL         => "\xf4";
 use constant PID_QUIT             => "\xf2";
 
+my %OPT;
 
 =head2 sendRawPacket I<type> I<data>
 
@@ -104,18 +109,28 @@ sub readPacket {
     do {
         ($rl, $b) = $DEV->read(1);
         $msg .= $b;
+        
+        while( length($msg) > 2 and substr($msg,0,2) ne "\xA0\xA2" )
+        {
+          $msg = substr($msg,1);
+        }
 
         if( (time() - $start) > 8){
             printf STDERR "Timeout while reading. Last bytes %s\n", hexdump(substr($msg,-10));
             last;
         }
-    } until (substr($msg,-2) eq "\xb0\xb3");
+    } until (length($msg) > 4 and length($msg)-8 == unpack("v", substr($msg,2,2)));
 
     print STDERR '<- '.hexdump($msg)."\n" if($OPT{'v'});
 
     my $payload = substr($msg,4,-4);
     my $sum     = unpack("v",substr($msg,-4,2));
-    die "Checksum failed" if($sum != checkSum($payload));
+    if($sum != checkSum($payload))
+    {
+        print STDERR "Expected checksum ",$sum," got ",checkSum($payload),"\n";
+        print STDERR "Packet: ",hexdump($msg),"\n";
+        die "aarrgh!\n";
+    }
     my $type = substr($payload,0,1);
     my $data = substr($payload,1);
 
@@ -128,9 +143,9 @@ Reads general information from the device and returns it as hash
 
 =cut
 sub downloadInfo {
-    sendRawPacket(PID_QRY_INFORMATION);
+    sendRawPacket(PID_QRY_INFORMATION,"");
     my ($type,$data) = readPacket();
-    if($type != PID_DATA){
+    if($type ne PID_DATA){
         print STDERR "got no info data\n";
         return undef;
     }
@@ -162,7 +177,7 @@ sub downloadTrackData {
         print STDERR "There are no trackpoints available";
         return 0;
     }
-    my $type,$data;
+    my ($type,$data);
     my $addr  = $info{'trackbuffer'};        # buffer address
     my $read  = 0;                           # bytes already read
     my $max   = $info{'trackpoints'} * 32;   # maximum bytes to read
@@ -179,7 +194,7 @@ sub downloadTrackData {
 
         # read answer
         ($type,$data) = readPacket();
-        if($type != PID_DATA){
+        if($type ne PID_DATA){
             # something went wrong
             print STDERR "Did not receive expected Trackpoint data";
             return 0;
@@ -190,7 +205,7 @@ sub downloadTrackData {
         $read += $toread;
 
         # send ACK
-        sendRawPacket(PID_ACK);
+        sendRawPacket(PID_ACK,"");
     }
 
     # Creat GPX file
@@ -288,7 +303,6 @@ EOT
 
 
 # prepare options
-%OPT;
 getopts('d:hvqi:o:',\%OPT);
 $OPT{'d'} = '/dev/ttyUSB0' if(!$OPT{'d'});
 help() if($OPT{'h'} || !$ARGV[0]);
@@ -302,9 +316,9 @@ $DEV->parity("none");
 $DEV->stopbits(1);
 
 # sync
-sendRawPacket(PID_SYNC);
+sendRawPacket(PID_SYNC,"");
 my ($type,$data) = readPacket();
-die("got no ack on sync") if($type != PID_ACK);
+die("got no ack on sync") if($type ne PID_ACK);
 
 # open files
 if($OPT{'i'}){
@@ -333,7 +347,7 @@ if($ARGV[0] eq 'gettracks'){
 
 
 # quit if wanted
-sendRawPacket(PID_QUIT) if ($OPT{'q'});
+sendRawPacket(PID_QUIT,"") if ($OPT{'q'});
 
 $DEV->close;
 close(IN);
