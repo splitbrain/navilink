@@ -109,7 +109,7 @@ sub readPacket {
     do {
         ($rl, $b) = $DEV->read(1);
         $msg .= $b;
-        
+
         while( length($msg) > 2 and substr($msg,0,2) ne "\xA0\xA2" )
         {
           $msg = substr($msg,1);
@@ -166,6 +166,72 @@ sub downloadInfo {
     return %info;
 }
 
+=head2 downloadWaypointData
+
+Reads all Waypoints from the device and prints it as GPX data
+
+=cut
+sub downloadWaypointData {
+    my %info = downloadInfo();
+    if(!defined(%info) || !$info{'waypoints'}){
+        print STDERR "There are no waypoints available";
+        return 0;
+    }
+    my ($type,$data);
+    my $read   = 0;                  # waypoints alreay read
+    my $max    = $info{'waypoints'}; # waypoints to read
+    my $points = '';
+
+    while($read < $max){
+        my $toread = 32;
+        $toread = ($max - $read) if( ($max - $read) < $toread);
+
+        # request data
+        my $msg = pack("V",$read).pack("v",$toread)."\x01";
+        sendRawPacket(PID_QRY_WAYPOINTS,$msg);
+
+        # read answer
+        ($type,$data) = readPacket();
+        if($type ne PID_DATA){
+            # something went wrong
+            print STDERR "Did not receive expected waypoint data";
+            return 0;
+        }
+        $points .= $data;
+
+        # increase read counter
+        $read += $toread;
+    }
+
+    # Create GPX file
+    print OUT "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+    print OUT "<gpx version=\"1.0\" creator=\"navilink\"
+                xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"
+                xmlns=\"http://www.topografix.com/GPX/1/0\"
+                xsi:schemaLocation=\"http://www.topografix.com/GPX/1/0 http://www.topografix.com/GPX/1/0/gpx.xsd\">\n";
+
+    # now parse the waypoints
+    for(my $i=0; $i<$read; $i++){
+        my @tp = unpack("vva7CllvC6CCCC",substr($points,$i*32,32));
+
+        #print hexdump(substr($points,$i*32,32))."\n";
+        #print Dumper(\@tp);
+
+        $tp[2] =~ s/[\x00\s]+$//;
+        printf OUT "<wpt lat=\"%f\" lon=\"%f\">\n", $tp[4]/10000000, $tp[5]/10000000;
+        printf OUT "  <name>%s</name>\n", $tp[2];
+        printf OUT "  <ele>%f</ele>\n", $tp[6]*0.3048; #feet to meters
+        printf OUT "  <sym>%s</sym>\n", waypointSymbol($tp[13]);
+        printf OUT "  <time>%04d-%02d-%02dT%02d:%02d:%02d</time>\n", $tp[7]+2000, $tp[8], $tp[9], $tp[10], $tp[11], $tp[12];
+        printf OUT "</wpt>\n";
+
+    }
+
+    print OUT "</gpx>\n";
+
+    return 1;
+}
+
 =head2 downloadTrackData
 
 Reads all Trackpoints from the device and prints it as GPX data
@@ -208,7 +274,7 @@ sub downloadTrackData {
         sendRawPacket(PID_ACK,"");
     }
 
-    # Creat GPX file
+    # Create GPX file
     print OUT "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
     print OUT "<gpx version=\"1.0\" creator=\"navilink\"
                 xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"
@@ -237,6 +303,67 @@ sub downloadTrackData {
 
     return 1;
 }
+
+=head2
+
+Translates a symbol number to a descriptive name. The names are should be close
+to the ones used by Garmin, but this is not always possible.
+
+See http://home.online.no/~sigurdhu/MapSource-text.htm for Garmin symbol names
+
+=cut
+sub waypointSymbol {
+    my $num = shift();
+    my @symbols = (
+        'Waypoint',
+        'Flag',
+        'Residence',
+        'Waypoint',
+        'Electricity Pylon',
+        'Tunnel',
+        'Gas Station',
+        'Convenience Store',
+        'Short Tower',
+        'Summit',
+        'Swimming Area',
+        'Forest',
+        'Bridge',
+        'Crossing',
+        'Fork',
+        'Right Turn',
+        'Left Turn',
+        'Bird',
+        'Lodging',
+        'Campground',
+        'Radio Beacon',
+        'Cable Car',
+        'Church',
+        'Tall Tower',
+        'Skiing Area',
+        'Marina',
+        'Fish',
+        'Hunting Area',
+        'Lake',
+        'Fishing Area',
+        'Lighthouse',
+        'Beach',
+        'Boat Ramp',
+        'Bike',
+        'Railway',
+        'Money',
+        'Truck Stop',
+        'Scenic Area',
+        'Gas Station 2',
+        'Bar',
+        'Runway',
+        'Airport',
+        'Medical Facility',
+        'Hotel',
+        'Parking Area'
+    );
+    return $symbols[$num];
+}
+
 
 =head2 checkSum I<payload>
 
@@ -291,8 +418,9 @@ Download or Upload data to a NaviGPS device
 
 COMMAND can be one of these:
 
-  info          print number of waypoints, routes and trackpoints
-  gettracks     download track data as GPX
+  info             print number of waypoints, routes and trackpoints
+  gettrackpoints   download track data as GPX
+  getwaypoints     download waypoints as GPX
 EOT
 
     exit 0
@@ -336,8 +464,10 @@ if($OPT{'o'}){
 
 
 # handle commands
-if($ARGV[0] eq 'gettracks'){
+if($ARGV[0] eq 'gettrackpoints'){
     downloadTrackData();
+}elsif($ARGV[0] eq 'getwaypoints'){
+    downloadWaypointData();
 }elsif($ARGV[0] eq 'info'){
     my %info = downloadInfo();
     print OUT 'waypoints   : '.$info{'waypoints'}."\n";
