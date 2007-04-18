@@ -116,8 +116,9 @@ sub readPacket {
         }
 
         if( (time() - $start) > 8){
-            printf STDERR "Timeout while reading. Last bytes %s\n", hexdump(substr($msg,-10));
-            last;
+            printf STDERR "Timeout while reading. Last bytes where '%s'.\n",
+                   hexdump(substr($msg,-10));
+            return undef;
         }
     } until (length($msg) > 4 and length($msg)-8 == unpack("v", substr($msg,2,2)));
 
@@ -125,11 +126,8 @@ sub readPacket {
 
     my $payload = substr($msg,4,-4);
     my $sum     = unpack("v",substr($msg,-4,2));
-    if($sum != checkSum($payload))
-    {
-        print STDERR "Expected checksum ",$sum," got ",checkSum($payload),"\n";
-        print STDERR "Packet: ",hexdump($msg),"\n";
-        die "aarrgh!\n";
+    if($sum != checkSum($payload)) {
+        nicedie('Expected checksum '.checkSum($payload).', got '.$sum);
     }
     my $type = substr($payload,0,1);
     my $data = substr($payload,1);
@@ -146,7 +144,7 @@ sub downloadInfo {
     sendRawPacket(PID_QRY_INFORMATION,"");
     my ($type,$data) = readPacket();
     if($type ne PID_DATA){
-        print STDERR "got no info data\n";
+        print STDERR "Got no info data\n";
         return undef;
     }
 
@@ -174,8 +172,7 @@ Reads all Waypoints from the device and prints it as GPX data
 sub downloadWaypointData {
     my %info = downloadInfo();
     if(!defined(%info) || !$info{'waypoints'}){
-        print STDERR "There are no waypoints available";
-        return 0;
+        nicedie("There are no waypoints available");
     }
     my ($type,$data);
     my $read   = 0;                  # waypoints alreay read
@@ -240,8 +237,7 @@ Reads all Trackpoints from the device and prints it as GPX data
 sub downloadTrackData {
     my %info = downloadInfo();
     if(!defined(%info) || !$info{'trackpoints'}){
-        print STDERR "There are no trackpoints available";
-        return 0;
+        nicedie("There are no trackpoints available");
     }
     my ($type,$data);
     my $addr  = $info{'trackbuffer'};        # buffer address
@@ -304,16 +300,130 @@ sub downloadTrackData {
     return 1;
 }
 
-=head2
+=head2 deleteTrackData
+
+Deletes all trackpoints from the device
+
+=cut
+sub deleteTrackData {
+    my %info = downloadInfo();
+    if(!defined(%info) || !$info{'trackpoints'}){
+        nicedie("There are no trackpoints available");
+    }
+    my $addr  = $info{'trackbuffer'};        # buffer address
+
+    dowait('All track data will be deleted from the device!');
+    my $msg = pack("V",$addr+$read)."\x00\x00\x00";
+    sendRawPacket(PID_ERASE_TRACK,$msg);
+
+    my ($type,$data) = readPacket();
+    nicedie("Trackpoint deletion failed.") if($type ne PID_CMD_OK);
+}
+
+=head2 deleteWaypointData
+
+Deletes all waypoints from the device
+
+=cut
+sub deleteWaypointData {
+    my %info = downloadInfo();
+    if(!defined(%info) || !$info{'waypoints'}){
+        nicedie("There are no waypoints available");
+    }
+
+    dowait('All track data will be deleted from the device!');
+    my $msg = "\x00\xf0\x00\x00";
+    sendRawPacket(PID_DEL_ALL_WAYPOINT,$msg);
+
+    my ($type,$data) = readPacket();
+    nicedie("Waypoint deletion failed.") if($type ne PID_ACK);
+}
+
+sub uploadWaypointData {
+nicedie("not working yet");
+
+    my @data = parseGPX('wpt');
+    nicedie("Could not read any waypoints") if(! scalar(@data) );
+
+    my $max  = scalar(@data); # waypoints to upload
+
+    for(my $i=0; $i<$max; $i++){
+        $msg  = "\x00\x40\x00\x00";
+        $msg .= pack('C6',$data[$i]->{name});
+        $msg .= "\x00\x00";
+        $msg .= pack('l',$data[$i]->{lat});
+        $msg .= pack('l',$data[$i]->{lon});
+        $msg .= pack('v',$data[$i]->{ele});
+        $msg .= pack('C6',$data[$i]->{time});
+        $msg .= pack('C',$data[$i]->{sym});
+        $msg .= "\x00\x7e";
+
+        sendRawPacket(PID_ADD_A_WAYPOINT,$msg);
+
+        my ($type,$data) = readPacket();
+        if($type ne PID_DATA){
+            printf STDERR "upload of waypoint %s, %s (%s) failed\n",
+                   $data[$i]->{lat}, $data[$i]->{lon}, $data[$i]->{name};
+
+        }
+    }
+#    print Dumper(\@data);
+}
+
+=head2 parseGPX I<type>
+
+Parses a GPX file into a data structure. This is not a real XML parser!
+
+=cut
+sub parseGPX {
+    my $type = shift;
+    my @data;
+
+    my $gpx = join('',<IN>);
+    while($gpx =~ s/<$type\s([^>]+)>(.*?)<\/$type>//is){
+        my $point = $1.' '.$2;
+        my %pt;
+
+        if($point =~ m/lat="(-?\d+(\.\d+)?)"/is){
+            $pt{lat} = $1;
+        }
+        if($point =~ m/lon="(-?\d+(\.\d+)?)"/is){
+            $pt{lon} = $1;
+        }
+        next if(!$pt{lat} || !$pt{lon});
+
+        if($point =~ m/<ele>\s*(-?\d+(\.\d+)?)\s*<\/ele>/is){
+            $pt{ele} = $1;
+        }
+        if($point =~ m/<time>\s*(\d\d\d\d)-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d).*?<\/time>/is){
+            $pt{time} = [$1 - 2000,$2,$3,$4,$5,$6];
+        }
+        if($point =~ m/<sym>(.+?)<\/sym>/is){
+            $pt{sym} = $1; #fixme revert to integer
+        }
+        if($point =~ m/<name>(.+?)<\/name>/is){
+            $pt{name} = uc($1);
+            $pt{name} =~ s/[^A-Z0-9]+//is;
+        }
+        push(@data,\%pt);
+    }
+
+    return @data;
+}
+
+=head2 waypointSymbol I<lookup>
 
 Translates a symbol number to a descriptive name. The names are should be close
 to the ones used by Garmin, but this is not always possible.
+
+If a name instead of a number is given, the number for the given name is looked up
 
 See http://home.online.no/~sigurdhu/MapSource-text.htm for Garmin symbol names
 
 =cut
 sub waypointSymbol {
-    my $num = shift();
+    my $lookup = shift();
+
     my @symbols = (
         'Waypoint',
         'Flag',
@@ -361,7 +471,19 @@ sub waypointSymbol {
         'Hotel',
         'Parking Area'
     );
-    return $symbols[$num];
+
+    # was a number given?
+    return $symbols[$lookup] if($lookup =~ m/^\d+$/);
+
+    # still here? Find the number for a symbol
+    for(my $i=0; $i<$#symbol; $i++){
+        if(uc($symbols[$i]) eq uc($lookup)){
+            return $i;
+        }
+    }
+
+    # still here? We found nothing, return standard
+    return 0;
 }
 
 
@@ -404,6 +526,43 @@ sub hexdump {
     return $packet;
 }
 
+=head2 wait
+
+Print a warning message and wait 8 seconds, displaying a counter.
+Gives the user the chance to abort dangerous commands
+
+=cut
+sub dowait {
+    my $msg = shift;
+    print STDERR $msg."\n";
+    print STDERR "Press CTRL-C to abort.\n";
+    for(my $i=8; $i>0; $i--){
+        print STDERR "$i ";
+        sleep(1);
+    }
+    print STDERR "\n";
+}
+
+=head2 nicedie I<message>
+
+Print a message and exit
+
+=cut
+sub nicedie {
+    my $msg = shift();
+    print STDERR "$msg\n";
+
+    $DEV->close if $DEV;
+    close(IN) if IN;
+    close(OUT) if OUT;
+    exit 1;
+}
+
+=head2 help
+
+Just print the usage screen
+
+=cut
 sub help {
     print <<EOT;
 Usage: navilink.pl [OPTIONS] COMMAND
@@ -418,9 +577,12 @@ Download or Upload data to a NaviGPS device
 
 COMMAND can be one of these:
 
-  info             print number of waypoints, routes and trackpoints
-  gettrackpoints   download track data as GPX
-  getwaypoints     download waypoints as GPX
+  info    print number of waypoints, routes and trackpoints
+  gettp   download track data as GPX
+  deltp   delete all track data from the device
+  getwp   download waypoints as GPX
+  putwp   upload waypoints given as GPX
+  delwp   delete all waypoints from the device
 EOT
 
     exit 0
@@ -437,7 +599,7 @@ help() if($OPT{'h'} || !$ARGV[0]);
 
 
 # open device
-$DEV = new Device::SerialPort ($OPT{'d'}) || die "Can't open ".$OPT{'d'}.": $^E\n";
+$DEV = new Device::SerialPort ($OPT{'d'}) || nicedie("Can't open ".$OPT{'d'}.": $^E");
 $DEV->baudrate(115200);
 $DEV->databits(8);
 $DEV->parity("none");
@@ -446,17 +608,18 @@ $DEV->stopbits(1);
 # sync
 sendRawPacket(PID_SYNC,"");
 my ($type,$data) = readPacket();
-die("got no ack on sync") if($type ne PID_ACK);
+nicedie("Failed to start the communication. Did you enable the NaviLink mode?")
+    if($type ne PID_ACK);
 
 # open files
 if($OPT{'i'}){
-    open(IN,$OPT{'i'}) || die("Could not open ".$OPT{'i'}." for reading");
+    open(IN,$OPT{'i'}) || nicedie("Could not open ".$OPT{'i'}." for reading");
 }else{
     *IN = *STDIN;
 }
 
 if($OPT{'o'}){
-    open(OUT,">".$OPT{'o'}) || die("Could not open ".$OPT{'o'}." for writing");
+    open(OUT,">".$OPT{'o'}) || nicedie("Could not open ".$OPT{'o'}." for writing");
 }else{
     *OUT = *STDERR;
 }
@@ -464,10 +627,16 @@ if($OPT{'o'}){
 
 
 # handle commands
-if($ARGV[0] eq 'gettrackpoints'){
+if($ARGV[0] eq 'gettp'){
     downloadTrackData();
-}elsif($ARGV[0] eq 'getwaypoints'){
+}elsif($ARGV[0] eq 'deltp'){
+    deleteTrackData();
+}elsif($ARGV[0] eq 'getwp'){
     downloadWaypointData();
+}elsif($ARGV[0] eq 'putwp'){
+    uploadWaypointData();
+}elsif($ARGV[0] eq 'delwp'){
+    deleteWaypointData();
 }elsif($ARGV[0] eq 'info'){
     my %info = downloadInfo();
     print OUT 'waypoints   : '.$info{'waypoints'}."\n";
