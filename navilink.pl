@@ -58,6 +58,7 @@ use constant PID_SYNC             => "\xd6";
 use constant PID_ACK              => "\x0c";
 use constant PID_NAK              => "\x00";
 use constant PID_QRY_INFORMATION  => "\x20";
+use constant PID_QRY_FW_VERSION   => "\xfe";
 use constant PID_DATA             => "\x03";
 use constant PID_ADD_A_WAYPOINT   => "\x3C";
 use constant PID_QRY_WAYPOINTS    => "\x28";
@@ -162,6 +163,22 @@ sub downloadInfo {
     );
 
     return %info;
+}
+
+=head2 downloadFWInfo
+
+Reads the firewall information
+
+=cut
+sub downloadFWInfo {
+    sendRawPacket(PID_QRY_FW_VERSION,'');
+    my ($type,$data) = readPacket();
+    if($type ne PID_DATA){
+        print STDERR "Got no info data\n";
+        return undef;
+    }
+    $data=~s/,.*$//;
+    return $data;
 }
 
 =head2 downloadWaypointData
@@ -638,7 +655,12 @@ if($ARGV[0] eq 'gettp'){
 }elsif($ARGV[0] eq 'delwp'){
     deleteWaypointData();
 }elsif($ARGV[0] eq 'info'){
-    my %info = downloadInfo();
+    my %info  = downloadInfo();
+    my $fwver = downloadFWInfo();
+    print OUT 'username    : '.$info{'username'}."\n";
+    print OUT 'firmware    : '.$fwver."\n";
+    print OUT 'serial      : '.$info{'serial'}."\n";
+    print OUT 'protocol    : '.$info{'protocol'}."\n";
     print OUT 'waypoints   : '.$info{'waypoints'}."\n";
     print OUT 'routes      : '.$info{'routes'}."\n";
     print OUT 'trackpoints : '.$info{'trackpoints'}."\n";
