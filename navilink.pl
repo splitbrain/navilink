@@ -356,9 +356,12 @@ sub deleteWaypointData {
     nicedie("Waypoint deletion failed.") if($type ne PID_ACK);
 }
 
-sub uploadWaypointData {
-nicedie("not working yet");
+=head2 uploadWaypointData
 
+Uploads waypoint read from the input GPX file
+
+=cut
+sub uploadWaypointData {
     my @data = parseGPX('wpt');
     nicedie("Could not read any waypoints") if(! scalar(@data) );
 
@@ -366,11 +369,11 @@ nicedie("not working yet");
 
     for(my $i=0; $i<$max; $i++){
         $msg  = "\x00\x40\x00\x00";
-        $msg .= pack('C6',$data[$i]->{name});
+        $msg .= pack('a6',$data[$i]->{name});
         $msg .= "\x00\x00";
-        $msg .= pack('l',$data[$i]->{lat});
-        $msg .= pack('l',$data[$i]->{lon});
-        $msg .= pack('v',$data[$i]->{ele});
+        $msg .= pack('l',int($data[$i]->{lat}*10000000));
+        $msg .= pack('l',int($data[$i]->{lon}*10000000));
+        $msg .= pack('v',int($data[$i]->{ele}/0.3048)); #feet to meters
         $msg .= pack('C6',$data[$i]->{time});
         $msg .= pack('C',$data[$i]->{sym});
         $msg .= "\x00\x7e";
@@ -384,7 +387,6 @@ nicedie("not working yet");
 
         }
     }
-#    print Dumper(\@data);
 }
 
 =head2 parseGPX I<type>
@@ -416,7 +418,7 @@ sub parseGPX {
             $pt{time} = [$1 - 2000,$2,$3,$4,$5,$6];
         }
         if($point =~ m/<sym>(.+?)<\/sym>/is){
-            $pt{sym} = $1; #fixme revert to integer
+            $pt{sym} = waypointSymbol($1);
         }
         if($point =~ m/<name>(.+?)<\/name>/is){
             $pt{name} = uc($1);
@@ -493,7 +495,7 @@ sub waypointSymbol {
     return $symbols[$lookup] if($lookup =~ m/^\d+$/);
 
     # still here? Find the number for a symbol
-    for(my $i=0; $i<$#symbol; $i++){
+    for(my $i=0; $i<$#symbols; $i++){
         if(uc($symbols[$i]) eq uc($lookup)){
             return $i;
         }
