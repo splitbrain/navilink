@@ -16,6 +16,7 @@ Copyright (c) 2007, Andreas Gohr <andi (at) splitbrain.org>
 Contributors:
     Andreas Gohr <andi (at) splitbrain.org>
     Martijn van Oosterhout <kleptog (at) svana.org>
+    Nick Lamb
 
 All rights reserved.
 
@@ -167,7 +168,7 @@ sub downloadInfo {
 
 =head2 downloadFWInfo
 
-Reads the firewall information
+Reads the firmware information
 
 =cut
 sub downloadFWInfo {
@@ -330,11 +331,19 @@ sub deleteTrackData {
     my $addr  = $info{'trackbuffer'};        # buffer address
 
     dowait('All track data will be deleted from the device!');
-    my $msg = pack("V",$addr+$read)."\x00\x00\x00";
+    my $msg = pack("V",$addr)."\x00\x00\x00";
     sendRawPacket(PID_ERASE_TRACK,$msg);
 
     my ($type,$data) = readPacket();
     nicedie("Trackpoint deletion failed.") if($type ne PID_CMD_OK);
+
+    if ($info{'trackpoints'} > 4096){
+        $msg = pack("V",$addr + (4096 * 32))."\x00\x00\x00";
+        sendRawPacket(PID_ERASE_TRACK,$msg);
+
+        ($type,$data) = readPacket();
+        nicedie("Trackpoint deletion failed.") if($type ne PID_CMD_OK);
+    }
 }
 
 =head2 deleteWaypointData
