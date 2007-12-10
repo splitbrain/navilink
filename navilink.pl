@@ -451,12 +451,19 @@ sub parseGPX {
             $pt{time} = [$1 - 2000,$2,$3,$4,$5,$6];
         }
         if($point =~ m/<sym>(.+?)<\/sym>/is){
-            $pt{sym} = waypointSymbol($1);
+            my $sym  = $1;
+            $pt{sym} = waypointSymbol($sym);
         }
         if($point =~ m/<name>(.+?)<\/name>/is){
             $pt{name} = uc($1);
             $pt{name} =~ s/[^A-Z0-9]+//is;
         }
+
+        # strip GC prefix from geocache names (we only have 6 chars)
+        if(lc($sym) == 'geocache'){
+            $pt{name} =~ s/^GC//;
+        }
+
         push(@data,\%pt);
     }
 
@@ -526,6 +533,9 @@ sub waypointSymbol {
 
     # was a number given?
     return $symbols[$lookup] if($lookup =~ m/^\d+$/);
+
+    # "fix" Geocaches
+    $lookup =~ s/Geocache/Flag/i;
 
     # still here? Find the number for a symbol
     for(my $i=0; $i<$#symbols; $i++){
