@@ -5,10 +5,10 @@
 This Script implements the NaviLink protocol to communicate with a
 Locosys NaviGPS via serial USB
 
-Please note: This script is far from complete, only track downloading is
-             currently supported. If you want to help refer to the protocol
-             specification at http://wiki.splitbrain.org/navilink at send
-             patches in unified diff format.
+Please note: This script is far from complete. If you want to help,
+             refer to the protocol specification at
+             http://wiki.splitbrain.org/navilink at send patches
+             in unified diff format.
 
 
 Copyright (c) 2007, Andreas Gohr <andi (at) splitbrain.org>
@@ -623,8 +623,8 @@ EOT
 # prepare options
 getopts('d:hvqi:o:',\%OPT);
 $OPT{'d'} = '/dev/ttyUSB0' if(!$OPT{'d'});
-help() if($OPT{'h'} || !$ARGV[0]);
 
+help() if($OPT{'h'} || scalar(@ARGV)!=1);
 
 # open device
 $DEV = new Device::SerialPort ($OPT{'d'}) || nicedie("Can't open ".$OPT{'d'}.": $^E");
@@ -649,7 +649,7 @@ if($OPT{'i'}){
 if($OPT{'o'}){
     open(OUT,">".$OPT{'o'}) || nicedie("Could not open ".$OPT{'o'}." for writing");
 }else{
-    *OUT = *STDERR;
+    *OUT = *STDOUT;
 }
 
 
