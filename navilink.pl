@@ -188,10 +188,19 @@ Reads all Waypoints from the device and prints it as GPX data
 
 =cut
 sub downloadWaypointData {
+    my $dogpx = shift(); # should a GPX be created? (or do we just need waypoint names)
+    my @wpnames;
+
+    # check for available waypoints
     my %info = downloadInfo();
     if(!defined(%info) || !$info{'waypoints'}){
-        nicedie("There are no waypoints available");
+        if($dogpx){
+            nicedie("There are no waypoints available");
+        }else{
+            return @wpnames;
+        }
     }
+
     my ($type,$data);
     my $read   = 0;                  # waypoints alreay read
     my $max    = $info{'waypoints'}; # waypoints to read
@@ -219,11 +228,13 @@ sub downloadWaypointData {
     }
 
     # Create GPX file
-    print OUT "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-    print OUT "<gpx version=\"1.0\" creator=\"navilink\"
-                xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"
-                xmlns=\"http://www.topografix.com/GPX/1/0\"
-                xsi:schemaLocation=\"http://www.topografix.com/GPX/1/0 http://www.topografix.com/GPX/1/0/gpx.xsd\">\n";
+    if($dogpx){
+        print OUT "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+        print OUT "<gpx version=\"1.0\" creator=\"navilink\"
+                    xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"
+                    xmlns=\"http://www.topografix.com/GPX/1/0\"
+                    xsi:schemaLocation=\"http://www.topografix.com/GPX/1/0 http://www.topografix.com/GPX/1/0/gpx.xsd\">\n";
+    }
 
     # now parse the waypoints
     for(my $i=0; $i<$read; $i++){
@@ -233,18 +244,24 @@ sub downloadWaypointData {
         #print Dumper(\@tp);
 
         $tp[2] =~ s/[\x00\s]+$//;
-        printf OUT "<wpt lat=\"%f\" lon=\"%f\">\n", $tp[4]/10000000, $tp[5]/10000000;
-        printf OUT "  <name>%s</name>\n", $tp[2];
-        printf OUT "  <ele>%f</ele>\n", $tp[6]*0.3048; #feet to meters
-        printf OUT "  <sym>%s</sym>\n", waypointSymbol($tp[13]);
-        printf OUT "  <time>%04d-%02d-%02dT%02d:%02d:%02d</time>\n", $tp[7]+2000, $tp[8], $tp[9], $tp[10], $tp[11], $tp[12];
-        printf OUT "</wpt>\n";
-
+        if($dogpx){
+            printf OUT "<wpt lat=\"%f\" lon=\"%f\">\n", $tp[4]/10000000, $tp[5]/10000000;
+            printf OUT "  <name>%s</name>\n", $tp[2];
+            printf OUT "  <ele>%f</ele>\n", $tp[6]*0.3048; #feet to meters
+            printf OUT "  <sym>%s</sym>\n", waypointSymbol($tp[13]);
+            printf OUT "  <time>%04d-%02d-%02dT%02d:%02d:%02d</time>\n", $tp[7]+2000, $tp[8], $tp[9], $tp[10], $tp[11], $tp[12];
+            printf OUT "</wpt>\n";
+        }else{
+            push(@wpnames,$tp[2]);
+        }
     }
 
-    print OUT "</gpx>\n";
-
-    return 1;
+    if($dogpx){
+        print OUT "</gpx>\n";
+        return 1;
+    }else{
+        return @wpnames;
+    }
 }
 
 =head2 downloadTrackData
@@ -374,9 +391,16 @@ sub uploadWaypointData {
     my @data = parseGPX('wpt');
     nicedie("Could not read any waypoints") if(! scalar(@data) );
 
-    my $max  = scalar(@data); # waypoints to upload
+    my $max     = scalar(@data); # waypoints to upload
+    my @wpnames = @_;            # existing waypoints
 
     for(my $i=0; $i<$max; $i++){
+        if (grep $data[$i]->{name} eq $_, @wpnames){
+            printf STDERR "skipped existing waypoint '%s'\n",$data[$i]->{name};
+            next;
+        }
+
+
         $msg  = "\x00\x40\x00\x00";
         $msg .= pack('a6',$data[$i]->{name});
         $msg .= "\x00\x00";
@@ -610,7 +634,8 @@ COMMAND can be one of these:
   deltp   delete all track data from the device
   getwp   download waypoints as GPX
   putwp   upload waypoints given as GPX
-  delwp   delete all waypoints from the device
+  updwp   update waypoints with given GPX (ignore existing ones)
+  delwp   delete ALL waypoints from the device
 EOT
 
     exit 0
@@ -660,9 +685,11 @@ if($ARGV[0] eq 'gettp'){
 }elsif($ARGV[0] eq 'deltp'){
     deleteTrackData();
 }elsif($ARGV[0] eq 'getwp'){
-    downloadWaypointData();
+    downloadWaypointData(1);
 }elsif($ARGV[0] eq 'putwp'){
     uploadWaypointData();
+}elsif($ARGV[0] eq 'updwp'){
+    uploadWaypointData(downloadWaypointData(0));
 }elsif($ARGV[0] eq 'delwp'){
     deleteWaypointData();
 }elsif($ARGV[0] eq 'info'){
@@ -675,6 +702,8 @@ if($ARGV[0] eq 'gettp'){
     print OUT 'waypoints   : '.$info{'waypoints'}."\n";
     print OUT 'routes      : '.$info{'routes'}."\n";
     print OUT 'trackpoints : '.$info{'trackpoints'}."\n";
+}else{
+    printf STDERR "Unknown command '%s'. Nothing done.\n", $ARGV[0];
 }
 
 
