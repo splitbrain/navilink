@@ -252,7 +252,7 @@ sub downloadWaypointData {
             printf OUT "  <time>%04d-%02d-%02dT%02d:%02d:%02d</time>\n", $tp[7]+2000, $tp[8], $tp[9], $tp[10], $tp[11], $tp[12];
             printf OUT "</wpt>\n";
         }else{
-            push(@wpnames,$tp[2]);
+            $wpnames[$tp[1]] = $tp[2];
         }
     }
 
@@ -363,24 +363,62 @@ sub deleteTrackData {
     }
 }
 
-=head2 deleteWaypointData
+=head2 deleteAllWaypointData
 
 Deletes all waypoints from the device
 
 =cut
-sub deleteWaypointData {
+sub deleteAllWaypointData {
     my %info = downloadInfo();
     if(!defined(%info) || !$info{'waypoints'}){
         nicedie("There are no waypoints available");
     }
 
-    dowait('All track data will be deleted from the device!');
+    dowait('All waypoints will be deleted from the device!');
     my $msg = "\x00\xf0\x00\x00";
     sendRawPacket(PID_DEL_ALL_WAYPOINT,$msg);
 
     my ($type,$data) = readPacket();
     nicedie("Waypoint deletion failed.") if($type ne PID_ACK);
 }
+
+=head2 deleteWaypointData
+
+Deletes the waypoints given in the input GPX from the device. (Based on the
+waypoint names, not the coordinates).
+
+=cut
+sub deleteWaypointData {
+    my @wpnames = @_;            # existing waypoints
+    nicedie("No deletable waypoints on the device") if(!scalar(@wpnames));
+
+    my @data = parseGPX('wpt');
+    nicedie("Could not read any waypoints to delete") if(! scalar(@data) );
+
+    my $max     = scalar(@data); # waypoints to delete
+
+    dowait("Attempting to remove $max waypoints from the device!");
+
+    my $del=0;
+    for(my $i=0; $i<$max; $i++){
+        my ($id) = grep $wpnames[$_] eq $data[$i]->{name}, 0..$#wpnames;
+        if($id){
+            $msg  = "\x00\x00";
+            $msg .= pack('v',$id);
+            sendRawPacket(PID_DEL_WAYPOINT,$msg);
+
+            my ($type,$data) = readPacket();
+            if($type ne PID_ACK){
+                printf STDERR "removal of waypoint '%s' failed - maybe in use?\n", $data[$i]->{name};
+            }else{
+                $del++;
+            }
+        }else{
+            printf STDERR "waypoint '%s' not found on the device\n", $data[$i]->{name};
+        }
+    }
+}
+
 
 =head2 uploadWaypointData
 
@@ -389,7 +427,7 @@ Uploads waypoint read from the input GPX file
 =cut
 sub uploadWaypointData {
     my @data = parseGPX('wpt');
-    nicedie("Could not read any waypoints") if(! scalar(@data) );
+    nicedie("Could not read any waypoints to upload") if(! scalar(@data) );
 
     my $max     = scalar(@data); # waypoints to upload
     my @wpnames = @_;            # existing waypoints
@@ -639,13 +677,14 @@ Download or Upload data to a NaviGPS device
 
 COMMAND can be one of these:
 
-  info    print number of waypoints, routes and trackpoints
-  gettp   download track data as GPX
-  deltp   delete all track data from the device
-  getwp   download waypoints as GPX
-  putwp   upload waypoints given as GPX
-  updwp   update waypoints with given GPX (ignore existing ones)
-  delwp   delete ALL waypoints from the device
+  info   print number of waypoints, routes and trackpoints
+  gettp download track data as GPX
+  deltp delete all track data from the device
+  getwp download waypoints as GPX
+  putwp upload waypoints given as GPX
+  updwp update waypoints with given GPX (ignore existing ones)
+  delwp delete ALL waypoints from the device
+  remwp remove waypoints given as GPX from the device
 EOT
 
     exit 0
@@ -700,8 +739,10 @@ if($ARGV[0] eq 'gettp'){
     uploadWaypointData();
 }elsif($ARGV[0] eq 'updwp'){
     uploadWaypointData(downloadWaypointData(0));
+}elsif($ARGV[0] eq 'remwp'){
+    deleteWaypointData(downloadWaypointData(0));
 }elsif($ARGV[0] eq 'delwp'){
-    deleteWaypointData();
+    deleteAllWaypointData();
 }elsif($ARGV[0] eq 'info'){
     my %info  = downloadInfo();
     my $fwver = downloadFWInfo();
