@@ -17,6 +17,7 @@ Contributors:
     Andreas Gohr <andi (at) splitbrain.org>
     Martijn van Oosterhout <kleptog (at) svana.org>
     Nick Lamb
+    Richard Fairhurst <richard (at) systemeD.net>
 
 All rights reserved.
 
@@ -316,7 +317,10 @@ sub downloadTrackData {
 
     # now parse the track log
     for(my $i=0; $i<$read; $i+=32){
-        my @tp = unpack("vvllllvCCCCCCCCCC",substr($track,$i,32));
+        my @tp = unpack("vvVVVVvCCCCCCCCCC",substr($track,$i,32));
+        for (my $j=2; $j<6; $j++) {
+            if ($tp[$j]>0x7FFFFFFF) { $tp[$j]=$tp[$j]-0x80000000-0x80000000; }
+        }
 
         #print hexdump(substr($track,$i,32))."\n";
         #print Dumper(\@tp);
