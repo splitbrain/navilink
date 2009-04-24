@@ -164,6 +164,7 @@ sub downloadInfo {
         'username'    => substr($data,-16)
     );
 
+    $info{'username'} =~ s/\0.*$//;
     return %info;
 }
 
