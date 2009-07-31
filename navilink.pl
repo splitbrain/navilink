@@ -11,13 +11,14 @@ Please note: This script is far from complete. If you want to help,
              in unified diff format.
 
 
-Copyright (c) 2007, Andreas Gohr <andi (at) splitbrain.org>
+Copyright (c) 2007-2009, Andreas Gohr <andi (at) splitbrain.org>
 
 Contributors:
     Andreas Gohr <andi (at) splitbrain.org>
     Martijn van Oosterhout <kleptog (at) svana.org>
     Nick Lamb
     Richard Fairhurst <richard (at) systemeD.net>
+    Tim Aerts <tim__aerts@hotmail.com>
 
 All rights reserved.
 
@@ -72,6 +73,8 @@ use constant PID_DEL_ALL_ROUTE    => "\x35";
 use constant PID_ADD_A_ROUTE      => "\x3D";
 use constant PID_ERASE_TRACK      => "\x11";
 use constant PID_READ_TRACKPOINTS => "\x14";
+use constant PID_READ_LOG_HEADER  => "\x50";
+use constant PID_LOG_DATA_ADDR    => "\x1c";
 use constant PID_CMD_OK           => "\xf3";
 use constant PID_CMD_FAIL         => "\xf4";
 use constant PID_QUIT             => "\xf2";
@@ -137,6 +140,57 @@ sub readPacket {
 
     return ($type,$data);
 }
+
+=head2 downloadLog
+
+Download from internal data logger
+
+=cut
+sub downloadLog {
+    sendRawPacket(PID_LOG_DATA_ADDR,"");
+    my ($type,$data) = readPacket();
+    if($type ne PID_DATA){
+        print STDERR "Got no address data\n";
+        return undef;
+    }
+    my ($start_addr, $a, $b, $end_addr) = unpack("i*",$data);
+
+    my $data = '';
+
+    my $read  = 0;    # bytes already read
+    my $max   = $end_addr - $start_addr;   # maximum bytes to read
+    my $addr  = $start_addr;
+
+    while($read < $max){
+        my $toread = 4*4*1024;
+        $toread = ($max - $read) if( ($max - $read) < $toread);
+
+        # request data
+        my $msg = pack("V",$addr+$read).pack("v",$toread)."\x00";
+        sendRawPacket(PID_READ_TRACKPOINTS,$msg);
+
+
+        # read answer
+        my ($type,$logdata) = readPacket();
+        if($type ne PID_DATA){
+            # something went wrong
+            print STDERR "Did not receive expected Trackpoint data";
+            return 0;
+        }
+        $data .= $logdata;
+        #print OUT $data;
+
+        # increase read counter
+        $read += $toread;
+
+        # send ACK
+        sendRawPacket(PID_ACK,"");
+    }
+
+    createGPX($read, $data);
+    return 1;
+}
+
 
 =head2 downloadInfo
 
@@ -308,6 +362,15 @@ sub downloadTrackData {
     }
 
     # Create GPX file
+    createGPX($read, $track);
+
+    return 1;
+}
+
+sub createGPX {
+    my ($read,$track) = @_;
+
+    # Create GPX file
     print OUT "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
     print OUT "<gpx version=\"1.0\" creator=\"navilink\"
                 xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"
@@ -336,8 +399,6 @@ sub downloadTrackData {
     print OUT "</trkseg>\n";
     print OUT "</trk>\n";
     print OUT "</gpx>\n";
-
-    return 1;
 }
 
 =head2 deleteTrackData
@@ -682,14 +743,15 @@ Download or Upload data to a NaviGPS device
 
 COMMAND can be one of these:
 
-  info   print number of waypoints, routes and trackpoints
-  gettp download track data as GPX
-  deltp delete all track data from the device
-  getwp download waypoints as GPX
-  putwp upload waypoints given as GPX
-  updwp update waypoints with given GPX (ignore existing ones)
-  delwp delete ALL waypoints from the device
-  remwp remove waypoints given as GPX from the device
+  info    print number of waypoints, routes and trackpoints
+  gettp   download track data as GPX
+  deltp   delete all track data from the device
+  getwp   download waypoints as GPX
+  putwp   upload waypoints given as GPX
+  updwp   update waypoints with given GPX (ignore existing ones)
+  delwp   delete ALL waypoints from the device
+  remwp   remove waypoints given as GPX from the device
+  getlog  download internal log data as GPX (BGT/GT-31 only)
 EOT
 
     exit 0
@@ -748,6 +810,8 @@ if($ARGV[0] eq 'gettp'){
     deleteWaypointData(downloadWaypointData(0));
 }elsif($ARGV[0] eq 'delwp'){
     deleteAllWaypointData();
+}elsif($ARGV[0] eq 'getlog'){
+    downloadLog();
 }elsif($ARGV[0] eq 'info'){
     my %info  = downloadInfo();
     my $fwver = downloadFWInfo();
